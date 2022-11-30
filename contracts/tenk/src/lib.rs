@@ -53,6 +53,9 @@ pub struct Contract {
 
     /// extension for generating media links
     media_extension: Option<String>,
+    
+    // account minter map
+    minter: LookupMap<AccountId, u32>
 }
 
 const GAS_REQUIRED_FOR_LINKDROP: Gas = Gas(parse_gas!("40 Tgas") as u64);
@@ -86,6 +89,7 @@ enum StorageKey {
     LinkdropKeys,
     Whitelist,
     Admins,
+    Minter,
 }
 
 #[near_bindgen]
@@ -93,16 +97,30 @@ impl Contract {
     #[init]
     pub fn new_default_meta(
         owner_id: AccountId,
-        metadata: InitialMetadata,
-        size: u32,
-        sale: Option<Sale>,
         media_extension: Option<String>,
     ) -> Self {
         Self::new(
             owner_id,
-            metadata.into(),
-            size,
-            sale.unwrap_or_default(),
+            NFTContractMetadata {
+              name: "Paras Anniversary".to_string(),
+              spec: NFT_METADATA_SPEC.to_string(),
+              symbol: "PARAS".to_string(),
+              base_uri: Some("https://bafybeidq4hm5vo5hkmmfhhpiwsoomrxbznww5gwtjhomphsn34pqebtzyu.ipfs.nftstorage.link".to_string()),
+              icon: None,
+              reference: None,
+              reference_hash: None
+            },
+            200,
+            Sale {
+              royalties: None,
+              initial_royalties: None,
+              presale_start: None,
+              public_sale_start: None,
+              allowance: Some(1),
+              presale_price: None,
+              price: near_units::near::parse("0N").unwrap().into(),
+              mint_rate_limit: None,
+            },
             media_extension,
         )
     }
@@ -139,11 +157,11 @@ impl Contract {
             sale,
             admins: UnorderedSet::new(StorageKey::Admins),
             media_extension,
+            minter: LookupMap::new(StorageKey::Minter),
         }
     }
 
-    #[payable]
-    pub fn nft_mint(
+    fn nft_mint(
         &mut self,
         _token_id: TokenId,
         _token_owner_id: AccountId,
@@ -157,15 +175,13 @@ impl Contract {
         self.nft_mint_many(1)[0].clone()
     }
 
-    #[payable]
-    pub fn nft_mint_many(&mut self, num: u16) -> Vec<Token> {
+    fn nft_mint_many(&mut self, num: u16) -> Vec<Token> {
         if let Some(limit) = self.sale.mint_rate_limit {
             require!(num <= limit, "over mint limit");
         }
         let owner_id = &env::signer_account_id();
         let num = self.assert_can_mint(owner_id, num);
         let tokens = self.nft_mint_many_ungaurded(num, owner_id, false);
-        self.use_whitelist_allowance(owner_id, num);
         tokens
     }
 
@@ -229,6 +245,18 @@ impl Contract {
     }
 
     // Private methods
+    fn check_and_insert_minter(&mut self, account_id: &AccountId) {
+      let mut minted = self.minter.get(account_id).unwrap_or(0);
+
+      require!(
+        minted < 1,
+        "Paras: You have minted the NFT"
+      );
+
+      minted = minted + 1;
+      self.minter.insert(account_id, &minted);
+    }
+
     fn assert_deposit(&self, num: u16, account_id: &AccountId) {
         require!(
             env::attached_deposit() >= self.total_cost(num, account_id).0,
@@ -237,18 +265,16 @@ impl Contract {
     }
 
     fn assert_can_mint(&mut self, account_id: &AccountId, num: u16) -> u16 {
-        let mut num = num;
+        let num = num;
         // Check quantity
         // Owner can mint for free
         if !self.is_owner(account_id) {
-            let allowance = match self.get_status() {
+            match self.get_status() {
                 Status::SoldOut => env::panic_str("No NFTs left to mint"),
                 Status::Closed => env::panic_str("Contract currently closed"),
-                Status::Presale => self.get_whitelist_allowance(account_id).left(),
-                Status::Open => self.get_or_add_whitelist_allowance(account_id, num),
+                Status::Presale => self.check_and_insert_minter(account_id),
+                Status::Open => self.check_and_insert_minter(account_id),
             };
-            num = u16::min(allowance, num);
-            require!(num > 0, "Account has no more allowance left");
         }
         require!(self.tokens_left() >= num as u32, "No NFTs left to mint");
         self.assert_deposit(num, account_id);

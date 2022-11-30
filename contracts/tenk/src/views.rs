@@ -97,4 +97,8 @@ impl Contract {
     pub fn initial(&self) -> u64 {
         self.raffle.len() + self.nft_total_supply().0 as u64
     }
+
+    pub fn has_mint(&self, account_id: &AccountId) -> bool {
+      self.minter.contains_key(account_id)
+    }
 }
