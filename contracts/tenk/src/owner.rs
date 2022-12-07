@@ -5,6 +5,21 @@ impl Contract {
     // Owner private methods
 
     /// @allow ["::admins", "::owner"]
+    pub fn change_token_metadata(&mut self, token_id: TokenId, new_index: String) -> bool {
+        self.assert_owner();
+
+        let mut token_metadata_by_id = self.tokens.token_metadata_by_id.as_ref().unwrap();
+        let mut metadata = token_metadata_by_id.get(&token_id).unwrap();
+        metadata.title = Some(format!("{} #{}", self.metadata.get().unwrap().name, new_index));
+        metadata.reference = Some(format!("{}.json", new_index));
+        metadata.media = Some(format!("{}.png", new_index));
+
+        self.tokens.token_metadata_by_id.as_mut().unwrap().insert(&token_id, &metadata);
+
+        true
+    }
+
+    /// @allow ["::admins", "::owner"]
     pub fn transfer_ownership(&mut self, new_owner: AccountId) -> bool {
         self.assert_owner();
         env::log_str(&format!(
